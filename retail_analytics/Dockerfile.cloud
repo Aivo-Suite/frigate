@@ -1,0 +1,30 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Instalar dependências básicas do sistema necessárias para compilar e para o Postgres
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalar apenas os pacotes necessários para a nuvem
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    streamlit \
+    pandas \
+    sqlalchemy \
+    psycopg2-binary \
+    bcrypt \
+    matplotlib \
+    seaborn
+
+# Copiar os arquivos do Analytics
+COPY . /app
+
+# Expor as portas que serão usadas (8000 para API, 8501 para Streamlit)
+EXPOSE 8000 8501
+
+# O comando real será sobrescrito pelo docker-compose dependendo do serviço
+CMD ["echo", "Please specify a command (uvicorn or streamlit run)"]

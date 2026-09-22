@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  saas-db:
+    image: ankane/pgvector:latest
+    container_name: aivo-saas-db
+    restart: always
+    environment:
+      POSTGRES_USER: aivo
+      POSTGRES_PASSWORD: aivopassword
+      POSTGRES_DB: aivo_saas
+    volumes:
+      - aivo_saas_data:/var/lib/postgresql/data
+    # IMPORTANTE: Não expomos a porta 5432 para a máquina Host 
+    # para evitar conflito com o supreme-sentinela-db-1
+    # expose: 5432 (padrão da imagem, já fica disponível para os outros containers da rede)
+
+  cloud-api:
+    build: 
+      context: .
+      dockerfile: Dockerfile.cloud
+    container_name: aivo-cloud-api
+    restart: always
+    command: uvicorn cloud_api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://aivo:aivopassword@saas-db:5432/aivo_saas
+    depends_on:
+      - saas-db
+
+  cloud-dashboard:
+    build: 
+      context: .
+      dockerfile: Dockerfile.cloud
+    container_name: aivo-cloud-dashboard
+    restart: always
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - DATABASE_URL=postgresql://aivo:aivopassword@saas-db:5432/aivo_saas
+    depends_on:
+      - saas-db
+      
+  # Container temporário para rodar o seed do banco de dados na inicialização
+  db-seed:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    container_name: aivo-db-seed
+    command: python seed_tenant.py
+    environment:
+      - DATABASE_URL=postgresql://aivo:aivopassword@saas-db:5432/aivo_saas
+    depends_on:
+      - cloud-api
+
+volumes:
+  aivo_saas_data:
