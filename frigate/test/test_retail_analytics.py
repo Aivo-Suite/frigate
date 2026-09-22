@@ -4,11 +4,13 @@ import unittest
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-# Force testing with an in-memory SQLite database before any module is loaded
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+# Force testing with a local SQLite database before any module is loaded
+TEST_DB_PATH = "test_retail_analytics.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
 
-# Append project root to path for imports to work correctly
+# Append project root and retail_analytics to path for imports to work correctly
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../retail_analytics'))
 
 from retail_analytics import db_config
 from retail_analytics import analytics_daemon
@@ -16,10 +18,22 @@ from retail_analytics import analytics_daemon
 class TestRetailAnalyticsDaemon(unittest.TestCase):
     
     def setUp(self):
-        """Set up an isolated in-memory database and clean known faces before each test."""
+        """Set up an isolated database and clean known faces before each test."""
         db_config.init_db()
+        with db_config.engine.begin() as conn:
+            conn.execute(db_config.text("DELETE FROM visits"))
+            conn.execute(db_config.text("DELETE FROM face_embeddings"))
+            conn.execute(db_config.text("DELETE FROM watch_list"))
+            conn.execute(db_config.text("DELETE FROM heatmap_points"))
+            
         analytics_daemon.known_faces.clear()
         analytics_daemon.last_heatmap_time.clear()
+
+    @classmethod
+    def tearDownClass(cls):
+        """Clean up the test database file after all tests."""
+        if os.path.exists(TEST_DB_PATH):
+            os.remove(TEST_DB_PATH)
 
     def test_db_initialization_sqlite(self):
         """Test if SQLAlchemy correctly creates tables in SQLite."""
@@ -33,8 +47,14 @@ class TestRetailAnalyticsDaemon(unittest.TestCase):
             self.assertIn('watch_list', tables)
             self.assertIn('heatmap_points', tables)
 
-    def test_visit_duration_calculation(self):
+    @patch('retail_analytics.analytics_daemon.requests.get')
+    def test_visit_duration_calculation(self, mock_requests_get):
         """Test if dwell time is calculated correctly based on start and end events."""
+        # Mock Re-ID snapshot request
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_requests_get.return_value = mock_response
+        
         event_payload = {
             "type": "end",
             "after": {
@@ -95,8 +115,13 @@ class TestRetailAnalyticsDaemon(unittest.TestCase):
         self.assertEqual(face_id_1, face_id_2)
 
     @patch('retail_analytics.analytics_daemon.requests.post')
-    def test_watch_list_trigger(self, mock_post):
+    @patch('retail_analytics.analytics_daemon.requests.get')
+    def test_watch_list_trigger(self, mock_requests_get, mock_post):
         """Test if the Telegram alert is dispatched when a VIP enters."""
+        # Mock Re-ID snapshot request
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_requests_get.return_value = mock_response
         # Add VIP to watch_list in DB
         vip_id = "VISITOR_VIP123"
         with db_config.engine.begin() as conn:

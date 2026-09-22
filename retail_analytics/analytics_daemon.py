@@ -8,6 +8,8 @@ import warnings
 from datetime import datetime
 import paho.mqtt.client as mqtt
 import time
+from sqlalchemy import text
+from db_config import engine, init_db
 
 # Suppress warnings from deepface/tf
 warnings.filterwarnings("ignore")
