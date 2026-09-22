@@ -1,0 +1,62 @@
+mqtt:
+  enabled: true
+  host: mqtt
+  topic_prefix: aivo_webcam
+  client_id: aivo-webcam-frigate
+
+detectors:
+  cpu:
+    type: cpu
+    num_threads: 2
+
+ffmpeg:
+  hwaccel_args: []
+
+record:
+  enabled: false
+
+snapshots:
+  enabled: false
+
+auth:
+  enabled: false
+
+cameras:
+  webcam_notebook:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: /dev/video0
+          input_args:
+            - -f
+            - v4l2
+            - -input_format
+            - mjpeg
+            - -video_size
+            - 640x480
+            - -framerate
+            - '30'
+          roles:
+            - detect
+    detect:
+      enabled: true
+      width: 640
+      height: 480
+      fps: 5
+    objects:
+      track:
+        - person
+    zones:
+      aivo_outside:
+        coordinates: 0,0,0.42,0,0.42,1,0,1
+        objects:
+          - person
+        inertia: 3
+        loitering_time: 0
+      aivo_inside:
+        coordinates: 0.58,0,1,0,1,1,0.58,1
+        objects:
+          - person
+        inertia: 3
+        loitering_time: 0
+version: 0.18-0

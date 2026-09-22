@@ -1,0 +1,69 @@
+services:
+  cloud-api-preview:
+    container_name: aivo-cloud-api-preview
+    restart: always
+    command: uvicorn cloud_api:app --host 0.0.0.0 --port 8000
+    environment:
+    - DATABASE_URL=${AIVO_DATABASE_URL:?Set AIVO_DATABASE_URL in .env}
+    - CAMERA_ENCRYPTION_KEY_FILE=/run/secrets/camera_key
+    - LIVE_PREVIEW_DIR=/run/aivo-live
+    networks:
+    - default
+    - proxy
+    secrets:
+    - camera_key
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/openapi.json',
+        timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    image: retail_analytics-cloud-api
+    volumes:
+    - aivo_live_preview:/run/aivo-live
+  cloud-dashboard-preview:
+    container_name: aivo-cloud-dashboard-preview
+    restart: always
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+    - DATABASE_URL=${AIVO_DATABASE_URL:?Set AIVO_DATABASE_URL in .env}
+    - CAMERA_ENCRYPTION_KEY_FILE=/run/secrets/camera_key
+    - LIVE_PREVIEW_DIR=/run/aivo-live
+    networks:
+    - default
+    - proxy
+    secrets:
+    - camera_key
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health',
+        timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    image: retail_analytics-cloud-dashboard
+    volumes:
+    - aivo_live_preview:/run/aivo-live:ro
+networks:
+  default:
+    external: true
+    name: retail_analytics_default
+  proxy:
+    external: true
+    name: supreme_backend
+secrets:
+  camera_key:
+    file: ./.secrets/camera.key
+volumes:
+  aivo_live_preview:
+    external: true
+    name: aivo_live_preview

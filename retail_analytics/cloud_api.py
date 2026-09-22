@@ -1,14 +1,23 @@
-from fastapi import FastAPI, Depends, HTTPException, Header
+import asyncio
+from live_preview import authorize_source, store_frame, MAX_FRAME_BYTES
+from fastapi import FastAPI, Depends, HTTPException, Header, Response, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy import text
 from db_config import engine, init_db
 import json
+from camera_store import camera_snapshot, init_camera_db
+from traffic_store import init_traffic_db, ingest_crossings, record_health, register_webcam
+from traffic_api import CrossingBatch, CounterHeartbeat, WebcamSource
+from cryptography.fernet import InvalidToken
+from sqlalchemy.exc import SQLAlchemyError
 
 app = FastAPI(title="Retail Analytics Cloud API")
 
 # Inicializar DB ao rodar a API
 init_db()
+init_camera_db(engine)
+init_traffic_db(engine)
 
 # --- Models ---
 class VisitPayload(BaseModel):
@@ -110,3 +119,71 @@ async def check_watch_list(face_id: str, tenant_id: str = Depends(get_tenant_fro
     if watch_match:
         return {"matched": True, "tag": watch_match[0]}
     return {"matched": False}
+
+
+@app.get("/api/config/cameras")
+def get_camera_config(response: Response, tenant_id: str = Depends(get_tenant_from_api_key)):
+    """Return only the authenticated tenant's complete active camera set."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        return camera_snapshot(engine, tenant_id)
+    except (InvalidToken, ValueError, RuntimeError, OSError, SQLAlchemyError):
+        raise HTTPException(status_code=503, detail="Camera configuration unavailable") from None
+
+
+@app.post("/api/traffic/crossings")
+def register_crossings(payload: CrossingBatch, tenant_id: str = Depends(get_tenant_from_api_key)):
+    """Persist authenticated crossings with idempotent batch acknowledgments."""
+    try:
+        acknowledged = ingest_crossings(engine, tenant_id, [event.model_dump() for event in payload.events])
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Camera unavailable for this tenant") from None
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Conflicting event identity") from None
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail="Crossing storage unavailable") from None
+    return {"acknowledged": acknowledged}
+
+
+@app.post("/api/traffic/heartbeat")
+def register_counter_heartbeat(payload: CounterHeartbeat, tenant_id: str = Depends(get_tenant_from_api_key)):
+    """Record MQTT and queue status independently of legacy analytics."""
+    try:
+        record_health(engine, tenant_id, payload.model_dump())
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Camera unavailable for this tenant") from None
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail="Counter health storage unavailable") from None
+    return {"status": "ok"}
+
+
+@app.post("/api/traffic/webcam-sources")
+def enroll_webcam(payload: WebcamSource, tenant_id: str = Depends(get_tenant_from_api_key)):
+    """Register an explicitly labeled webcam test source for the authenticated store."""
+    try:
+        register_webcam(engine, tenant_id, payload.camera_id, payload.name)
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail="Webcam registration unavailable") from None
+    return {"tenant_id": tenant_id, "camera_id": payload.camera_id, "is_test": True}
+
+
+@app.put("/api/traffic/webcam-preview/{camera_id}")
+async def upload_webcam_preview(camera_id: str, request: Request, tenant_id: str = Depends(get_tenant_from_api_key)):
+    """Accept a bounded JPEG from an authenticated webcam test source."""
+    if not await asyncio.to_thread(authorize_source, engine, tenant_id, camera_id):
+        raise HTTPException(status_code=403, detail="Webcam unavailable for this tenant")
+    if request.headers.get("content-type", "").split(";")[0] != "image/jpeg":
+        raise HTTPException(status_code=415, detail="JPEG required")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_FRAME_BYTES:
+            raise HTTPException(status_code=413, detail="Frame too large")
+    try:
+        await asyncio.to_thread(store_frame, tenant_id, camera_id, bytes(body))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid preview image") from None
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=503, detail="Preview temporarily unavailable") from None
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})

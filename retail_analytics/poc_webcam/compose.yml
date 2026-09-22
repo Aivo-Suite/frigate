@@ -1,0 +1,86 @@
+name: aivo-webcam-poc
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: aivo-webcam-mqtt
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+    restart: 'no'
+    volumes:
+    - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test:
+      - CMD
+      - mosquitto_pub
+      - -h
+      - 127.0.0.1
+      - -t
+      - healthcheck
+      - -m
+      - ok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: aivo-webcam-frigate
+    restart: 'no'
+    shm_size: 256mb
+    devices:
+    - /dev/video0:/dev/video0
+    volumes:
+    - ./config:/config
+    - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+    - /tmp/cache:size=268435456
+    - /media/frigate:size=134217728
+    ports:
+    - 127.0.0.1:5000:5000
+    depends_on:
+      mqtt:
+        condition: service_healthy
+  counter:
+    build:
+      context: ..
+      dockerfile: Dockerfile.counter
+    container_name: aivo-webcam-counter
+    restart: 'no'
+    env_file:
+    - .env
+    environment:
+      TENANT_API_KEY_FILE: /run/secrets/tenant_api_key
+      MQTT_BROKER: mqtt
+      MQTT_TOPIC_PREFIX: aivo_webcam
+      FRIGATE_CONFIG_PATH: /frigate/config.yml
+      COUNTING_CAMERA_NAME: webcam_notebook
+      COUNTER_DATABASE: /data/counter.db
+    volumes:
+    - ./config:/frigate:ro
+    - ./state:/data
+    secrets:
+    - tenant_api_key
+    depends_on:
+      mqtt:
+        condition: service_healthy
+  live-preview:
+    build:
+      context: ..
+      dockerfile: Dockerfile.counter
+    container_name: aivo-webcam-live-preview
+    profiles:
+    - live
+    restart: 'no'
+    command:
+    - python
+    - edge_live_preview.py
+    env_file:
+    - .env
+    environment:
+      TENANT_API_KEY_FILE: /run/secrets/tenant_api_key
+    secrets:
+    - tenant_api_key
+    depends_on:
+      frigate:
+        condition: service_healthy
+secrets:
+  tenant_api_key:
+    file: ./.secrets/tenant_api_key

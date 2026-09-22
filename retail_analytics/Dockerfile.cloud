@@ -18,7 +18,9 @@ RUN pip install --no-cache-dir \
     psycopg2-binary \
     bcrypt \
     matplotlib \
-    seaborn
+    seaborn \
+    cryptography \
+    "PyYAML>=6,<7"
 
 # Copiar os arquivos do Analytics
 COPY . /app

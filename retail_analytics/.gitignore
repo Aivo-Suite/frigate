@@ -1,0 +1,17 @@
+.secrets/
+backups/
+.env
+*.env
+*.db
+*.dump
+__pycache__/
+
+# Downloaded and checksum-verified by download_browser_model.py
+browser_models/*.onnx
+
+# Runtime data and database sidecars
+*.db-*
+*.sqlite
+*.sqlite3
+*.sql
+.aivo-camera-*

@@ -1,0 +1,18 @@
+[Unit]
+Description=Aivo camera provisioning for Frigate
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/aivo/retail_analytics
+EnvironmentFile=/etc/aivo/edge.env
+ExecStart=/opt/aivo/venv/bin/python /opt/aivo/retail_analytics/edge_provisioner.py
+Restart=on-failure
+RestartSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

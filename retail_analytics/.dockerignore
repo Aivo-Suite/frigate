@@ -1,0 +1,12 @@
+.secrets/
+backups/
+.env
+*.env
+*.db
+*.sql
+*.dump
+__pycache__/
+test_*.py
+poc_webcam/
+**/.secrets/
+**/.env

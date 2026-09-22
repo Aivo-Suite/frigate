@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.counter.txt .
+RUN pip install --no-cache-dir -r requirements.counter.txt
+COPY crossing_counter.py edge_counter.py edge_live_preview.py ./
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "edge_counter.py"]

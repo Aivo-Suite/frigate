@@ -40,8 +40,9 @@ def login():
                     st.error("Credenciais inválidas.")
 
 def logout():
-    st.session_state["tenant_id"] = None
-    st.session_state["tenant_name"] = None
+    from browser_dashboard import close_browser_session
+    close_browser_session(engine)
+    st.session_state.clear()
     st.rerun()
 
 if not st.session_state["tenant_id"]:
@@ -53,6 +54,29 @@ st.sidebar.title(f"🏢 {st.session_state['tenant_name']}")
 if st.sidebar.button("Sair"):
     logout()
 st.sidebar.divider()
+page = st.sidebar.radio("Navegação", ["Entradas e Saídas", "Webcam no navegador", "Análise de Tráfego", "Configurar Câmeras"])
+if page not in ("Webcam no navegador", "Configurar Câmeras"):
+    from browser_dashboard import close_browser_session
+    close_browser_session(engine)
+if page == "Webcam no navegador":
+    from camera_dashboard import clear_camera_wizard
+    clear_camera_wizard()
+    from browser_dashboard import render_browser_camera
+    render_browser_camera(engine, tid)
+    st.stop()
+if page != "Configurar Câmeras":
+    from camera_dashboard import clear_camera_wizard
+    clear_camera_wizard()
+if page == "Entradas e Saídas":
+    from traffic_dashboard import render_traffic_counter
+    render_traffic_counter(engine, tid)
+    st.stop()
+
+if page == "Configurar Câmeras":
+    from camera_dashboard import render_camera_settings
+    render_camera_settings(engine, tid)
+    st.stop()
+
 
 def load_data():
     try:
@@ -74,7 +98,7 @@ st.markdown("Visualização de métricas de contagem de pessoas, reidentificaç�
 df = load_data()
 
 if df.empty:
-    st.warning("Nenhum dado encontrado no banco de dados. Aguarde eventos do Frigate.")
+    st.info("Ainda não há visitas analisadas. Os gráficos serão preenchidos quando houver dados reais enviados pelo servidor local. Configure uma câmera para começar; contagens da webcam ficam em Entradas e Saídas.")
 else:
     # Filtro por data
     today = date.today()
@@ -93,7 +117,7 @@ else:
         
         with col1:
             total_visits = len(df_filtered)
-            st.metric(label="Total de Visitas", value=total_visits)
+            st.metric(label="Rastreamentos registrados", value=total_visits)
             
         with col2:
             # Calcular visitantes conhecidos/recorrentes
