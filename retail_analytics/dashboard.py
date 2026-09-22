@@ -8,9 +8,55 @@ from db_config import engine
 
 # DB_PATH = "retail_analytics.db" - Removido (agora usa db_config)
 
+import bcrypt
+
+# Inicializar DB
+init_db()
+
+# --- Autenticação Multi-Tenant ---
+if "tenant_id" not in st.session_state:
+    st.session_state["tenant_id"] = None
+if "tenant_name" not in st.session_state:
+    st.session_state["tenant_name"] = None
+
+def login():
+    st.title("🔐 Retail Analytics Cloud")
+    st.markdown("Acesse o painel da sua loja.")
+    with st.form("login_form"):
+        username = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submit = st.form_submit_button("Entrar")
+        if submit:
+            with engine.connect() as conn:
+                user = conn.execute(
+                    text("SELECT tenant_id, name, password_hash FROM tenants WHERE username = :u"),
+                    {"u": username}
+                ).fetchone()
+                if user and bcrypt.checkpw(password.encode(), user[2].encode()):
+                    st.session_state["tenant_id"] = user[0]
+                    st.session_state["tenant_name"] = user[1]
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas.")
+
+def logout():
+    st.session_state["tenant_id"] = None
+    st.session_state["tenant_name"] = None
+    st.rerun()
+
+if not st.session_state["tenant_id"]:
+    login()
+    st.stop()
+
+tid = st.session_state["tenant_id"]
+st.sidebar.title(f"🏢 {st.session_state['tenant_name']}")
+if st.sidebar.button("Sair"):
+    logout()
+st.sidebar.divider()
+
 def load_data():
     try:
-        df = pd.read_sql_query("SELECT * FROM visits", engine)
+        df = pd.read_sql_query("SELECT * FROM visits WHERE tenant_id = %(tid)s", engine, params={"tid": tid})
         
         # Convert timestamps to datetime
         if not df.empty:
@@ -22,9 +68,7 @@ def load_data():
     except Exception as e:
         return pd.DataFrame()
 
-st.set_page_config(page_title="Frigate Retail Analytics", layout="wide")
-
-st.title("Frigate Retail Analytics Dashboard")
+st.title("📊 Retail Analytics Dashboard")
 st.markdown("Visualização de métricas de contagem de pessoas, reidentificação e tempo de permanência.")
 
 df = load_data()
@@ -78,15 +122,18 @@ else:
             if submit_btn and alert_face_id:
                 try:
                     with engine.begin() as conn_wl:
-                        conn_wl.execute(text("DELETE FROM watch_list WHERE face_id = :fid"), {"fid": alert_face_id})
-                        conn_wl.execute(text("INSERT INTO watch_list (face_id, tag) VALUES (:fid, :tag)"), {"fid": alert_face_id, "tag": alert_tag})
+                        conn_wl.execute(
+                            text("INSERT INTO watch_list (tenant_id, face_id, tag) VALUES (:tid, :fid, :tag) ON CONFLICT(tenant_id, face_id) DO UPDATE SET tag=:tag"),
+                            {"tid": tid, "fid": alert_face_id, "tag": alert_tag}
+                        )
                     st.success(f"{alert_face_id} adicionado aos alertas!")
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
 
         # Exibir Watch List atual no sidebar
         try:
-            wl_df = pd.read_sql_query("SELECT * FROM watch_list", engine)
+            query_wl = text("SELECT face_id, tag FROM watch_list WHERE tenant_id = :tid")
+            wl_df = pd.read_sql(query_wl, engine, params={"tid": tid})
             if not wl_df.empty:
                 st.sidebar.markdown("**Alertas Ativos:**")
                 st.sidebar.dataframe(wl_df, hide_index=True)
@@ -135,7 +182,7 @@ else:
         
         try:
             # Busca pontos gravados na data selecionada
-            query = f"SELECT x, y FROM heatmap_points WHERE date(date_recorded) = '{selected_date}'"
+            query = f"SELECT x, y FROM heatmap_points WHERE date(date_recorded) = '{selected_date}' AND tenant_id = '{tid}'"
             df_hm = pd.read_sql_query(query, engine)
             
             if not df_hm.empty and len(df_hm) > 5: # Precisa de alguns pontos para o KDE funcionar

@@ -10,10 +10,23 @@ engine = create_engine(DATABASE_URL)
 
 def init_db():
     with engine.begin() as conn:
+        # Tabela tenants (Lojas/Clientes do SaaS)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                tenant_id VARCHAR PRIMARY KEY,
+                name VARCHAR,
+                username VARCHAR UNIQUE,
+                password_hash VARCHAR,
+                api_key VARCHAR UNIQUE
+            )
+        """))
+
         # Tabela visits
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS visits (
-                tracking_id VARCHAR PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id VARCHAR,
+                tracking_id VARCHAR,
                 face_id VARCHAR,
                 start_time FLOAT,
                 end_time FLOAT,
@@ -22,20 +35,22 @@ def init_db():
                 estimated_age FLOAT,
                 estimated_gender VARCHAR,
                 camera_name VARCHAR,
-                date_recorded TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                date_recorded TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tenant_id, tracking_id)
             )
         """))
         
         # Tabela embeddings
-        # Para pgvector no Postgres, usaríamos o tipo VECTOR. 
-        # No SQLite mantemos como texto (JSON).
         if "postgresql" in DATABASE_URL:
             try:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS face_embeddings (
-                        visitor_id VARCHAR PRIMARY KEY,
-                        embedding_vector VECTOR(128)
+                        id SERIAL PRIMARY KEY,
+                        tenant_id VARCHAR,
+                        visitor_id VARCHAR,
+                        embedding_vector VECTOR(128),
+                        UNIQUE(tenant_id, visitor_id)
                     )
                 """))
             except Exception as e:
@@ -43,22 +58,30 @@ def init_db():
         else:
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS face_embeddings (
-                    visitor_id VARCHAR PRIMARY KEY,
-                    embedding_json VARCHAR
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id VARCHAR,
+                    visitor_id VARCHAR,
+                    embedding_json VARCHAR,
+                    UNIQUE(tenant_id, visitor_id)
                 )
             """))
 
         # Tabela watch_list
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS watch_list (
-                face_id VARCHAR PRIMARY KEY,
-                tag VARCHAR
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id VARCHAR,
+                face_id VARCHAR,
+                tag VARCHAR,
+                UNIQUE(tenant_id, face_id)
             )
         """))
 
         # Tabela heatmap
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS heatmap_points (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id VARCHAR,
                 tracking_id VARCHAR,
                 x FLOAT,
                 y FLOAT,

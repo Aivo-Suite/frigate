@@ -21,11 +21,15 @@ except ImportError:
     DEEPFACE_AVAILABLE = False
     print("WARNING: deepface library not found. Zero-shot Re-ID will be disabled. Install with: pip install deepface tf-keras")
 
-# Configuration
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
 MQTT_TOPIC = "frigate/events"
 FRIGATE_URL = os.getenv("FRIGATE_URL", "http://localhost:5000")
+
+# SaaS Cloud Mode Configuration (Módulo 5 Edge-to-Cloud)
+CLOUD_MODE = os.getenv("CLOUD_MODE", "false").lower() == "true"
+CLOUD_API_URL = os.getenv("CLOUD_API_URL", "http://localhost:8000")
+TENANT_API_KEY = os.getenv("TENANT_API_KEY", "")
 
 # Telegram Alerts Configuration (Módulo 2)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "") # Preencha com o token do seu bot
@@ -92,13 +96,19 @@ def identify_visitor(snapshot_path):
             new_vid = f"VISITOR_{str(uuid.uuid4())[:8].upper()}"
             print(f"  -> New Face Detected. Assigned ID: {new_vid}")
             
-            # Save to memory and DB
+            # Save to memory and DB/Cloud
             known_faces[new_vid] = embedding
-            with engine.begin() as conn:
-                conn.execute(
-                    text("INSERT INTO face_embeddings (visitor_id, embedding_json) VALUES (:vid, :emb)"),
-                    {"vid": new_vid, "emb": json.dumps(embedding.tolist())}
-                )
+            
+            if not CLOUD_MODE:
+                # Local Database Write
+                with engine.begin() as conn:
+                    # In local mode, tenant_id is "local" or NULL
+                    conn.execute(
+                        text("INSERT INTO face_embeddings (tenant_id, visitor_id, embedding_json) VALUES ('local', :vid, :emb)"),
+                        {"vid": new_vid, "emb": json.dumps(embedding.tolist())}
+                    )
+            # Em modo cloud, a API lida com a inserção de embedding junto com a visita!
+            
             face_id_result = new_vid
             
         # Module 1: Extract Demographics
@@ -189,41 +199,76 @@ def save_visit(event_data):
     if not face_id or face_id == "Unknown" or face_id == "":
         face_id, age, gender = process_reid(tracking_id)
 
-    # Save to Database using SQLAlchemy
-    try:
-        with engine.begin() as conn:
-            # Check if visit exists to do a DB-agnostic Upsert
-            existing = conn.execute(text("SELECT tracking_id FROM visits WHERE tracking_id = :tid"), {"tid": tracking_id}).fetchone()
+    if CLOUD_MODE:
+        # Enviar para a Nuvem via API REST
+        if not TENANT_API_KEY:
+            print("[-] CLOUD_MODE is True but TENANT_API_KEY is empty!")
+            return
             
-            if existing:
-                conn.execute(text("""
-                    UPDATE visits SET 
-                        face_id=:fid, end_time=:end_t, dwell_time_seconds=:dwell, 
-                        entered_zones=:zones, estimated_age=:age, estimated_gender=:gender, camera_name=:cam
-                    WHERE tracking_id=:tid
-                """), {
-                    "fid": face_id, "end_t": end_time, "dwell": dwell_time,
-                    "zones": entered_zones, "age": age, "gender": gender, "cam": camera_name, "tid": tracking_id
-                })
-            else:
-                conn.execute(text("""
-                    INSERT INTO visits 
-                    (tracking_id, face_id, start_time, end_time, dwell_time_seconds, entered_zones, estimated_age, estimated_gender, camera_name)
-                    VALUES (:tid, :fid, :start_t, :end_t, :dwell, :zones, :age, :gender, :cam)
-                """), {
-                    "tid": tracking_id, "fid": face_id, "start_t": start_time, "end_t": end_time,
-                    "dwell": dwell_time, "zones": entered_zones, "age": age, "gender": gender, "cam": camera_name
-                })
+        payload = {
+            "tracking_id": tracking_id,
+            "face_id": face_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "dwell_time_seconds": dwell_time,
+            "entered_zones": entered_zones,
+            "estimated_age": age,
+            "estimated_gender": gender,
+            "camera_name": camera_name,
+        }
+        
+        # Enviar também o embedding para popular o banco de embeddings da nuvem, se for uma nova face gerada localmente
+        if face_id in known_faces:
+            payload["embedding_json"] = json.dumps(known_faces[face_id].tolist())
             
-            # Módulo 2: Checar se o visitante está na Watch List para emitir alerta
-            watch_match = conn.execute(text("SELECT tag FROM watch_list WHERE face_id = :fid"), {"fid": face_id}).fetchone()
-            if watch_match:
-                tag = watch_match[0]
-                send_telegram_alert(face_id, tag, age, gender)
+        headers = {"x-api-key": TENANT_API_KEY}
+        try:
+            requests.post(f"{CLOUD_API_URL}/api/visits", json=payload, headers=headers, timeout=3)
+            print(f"[☁️] Cloud Visit Synced: ID={tracking_id} | Face={face_id} | Cam={camera_name}")
+            
+            # Checar watch list na nuvem
+            wl_resp = requests.get(f"{CLOUD_API_URL}/api/watch_list/{face_id}", headers=headers, timeout=3)
+            if wl_resp.status_code == 200 and wl_resp.json().get("matched"):
+                send_telegram_alert(face_id, wl_resp.json().get("tag"), age, gender)
+        except Exception as e:
+            print(f"[-] Cloud sync failed for visit: {e}")
+            
+    else:
+        # Save to Local Database usando SQLAlchemy (Modo Edge/Local Standalone)
+        try:
+            with engine.begin() as conn:
+                # Check if visit exists to do a DB-agnostic Upsert
+                existing = conn.execute(text("SELECT id FROM visits WHERE tenant_id = 'local' AND tracking_id = :tid"), {"tid": tracking_id}).fetchone()
                 
-        print(f"[+] Visit Logged: ID={tracking_id} | Face={face_id} | Cam={camera_name} | Dwell={dwell_time:.1f}s")
-    except Exception as e:
-        print(f"[-] Error saving visit: {e}")
+                if existing:
+                    conn.execute(text("""
+                        UPDATE visits SET 
+                            face_id=:fid, end_time=:end_t, dwell_time_seconds=:dwell, 
+                            entered_zones=:zones, estimated_age=:age, estimated_gender=:gender, camera_name=:cam
+                        WHERE tenant_id='local' AND tracking_id=:tid
+                    """), {
+                        "fid": face_id, "end_t": end_time, "dwell": dwell_time,
+                        "zones": entered_zones, "age": age, "gender": gender, "cam": camera_name, "tid": tracking_id
+                    })
+                else:
+                    conn.execute(text("""
+                        INSERT INTO visits 
+                        (tenant_id, tracking_id, face_id, start_time, end_time, dwell_time_seconds, entered_zones, estimated_age, estimated_gender, camera_name)
+                        VALUES ('local', :tid, :fid, :start_t, :end_t, :dwell, :zones, :age, :gender, :cam)
+                    """), {
+                        "tid": tracking_id, "fid": face_id, "start_t": start_time, "end_t": end_time,
+                        "dwell": dwell_time, "zones": entered_zones, "age": age, "gender": gender, "cam": camera_name
+                    })
+                
+                # Módulo 2: Checar se o visitante está na Watch List para emitir alerta
+                watch_match = conn.execute(text("SELECT tag FROM watch_list WHERE tenant_id = 'local' AND face_id = :fid"), {"fid": face_id}).fetchone()
+                if watch_match:
+                    tag = watch_match[0]
+                    send_telegram_alert(face_id, tag, age, gender)
+                    
+            print(f"[+] Visit Logged: ID={tracking_id} | Face={face_id} | Cam={camera_name} | Dwell={dwell_time:.1f}s")
+        except Exception as e:
+            print(f"[-] Error saving visit: {e}")
 
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
@@ -255,12 +300,23 @@ def save_heatmap_point(event_data):
     x = (box[0] + box[2]) / 2.0
     y = box[3] # ymax is the bottom of the bounding box
     
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("INSERT INTO heatmap_points (tracking_id, x, y) VALUES (:tid, :x, :y)"), 
-                         {"tid": tracking_id, "x": x, "y": y})
-    except Exception as e:
-        pass
+    if CLOUD_MODE:
+        if TENANT_API_KEY:
+            try:
+                requests.post(
+                    f"{CLOUD_API_URL}/api/heatmap", 
+                    json={"tracking_id": tracking_id, "x": x, "y": y}, 
+                    headers={"x-api-key": TENANT_API_KEY}, 
+                    timeout=2
+                )
+            except: pass
+    else:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("INSERT INTO heatmap_points (tenant_id, tracking_id, x, y) VALUES ('local', :tid, :x, :y)"), 
+                             {"tid": tracking_id, "x": x, "y": y})
+        except Exception as e:
+            pass
 
 def on_message(client, userdata, msg):
     try:
