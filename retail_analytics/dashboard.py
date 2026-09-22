@@ -4,7 +4,7 @@ from datetime import datetime, date
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sqlalchemy import text
-from db_config import engine
+from db_config import engine, init_db
 
 # DB_PATH = "retail_analytics.db" - Removido (agora usa db_config)
 

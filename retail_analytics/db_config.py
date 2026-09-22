@@ -9,6 +9,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///retail_analytics.db")
 engine = create_engine(DATABASE_URL)
 
 def init_db():
+    if "postgresql" in DATABASE_URL:
+        id_col = "SERIAL PRIMARY KEY"
+    else:
+        id_col = "INTEGER PRIMARY KEY AUTOINCREMENT"
+
     with engine.begin() as conn:
         # Tabela tenants (Lojas/Clientes do SaaS)
         conn.execute(text("""
@@ -22,9 +27,9 @@ def init_db():
         """))
 
         # Tabela visits
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS visits (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_col},
                 tenant_id VARCHAR,
                 tracking_id VARCHAR,
                 face_id VARCHAR,
@@ -44,9 +49,9 @@ def init_db():
         if "postgresql" in DATABASE_URL:
             try:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                conn.execute(text("""
+                conn.execute(text(f"""
                     CREATE TABLE IF NOT EXISTS face_embeddings (
-                        id SERIAL PRIMARY KEY,
+                        id {id_col},
                         tenant_id VARCHAR,
                         visitor_id VARCHAR,
                         embedding_vector VECTOR(128),
@@ -56,9 +61,9 @@ def init_db():
             except Exception as e:
                 print(f"Aviso Vector DB: {e}")
         else:
-            conn.execute(text("""
+            conn.execute(text(f"""
                 CREATE TABLE IF NOT EXISTS face_embeddings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id {id_col},
                     tenant_id VARCHAR,
                     visitor_id VARCHAR,
                     embedding_json VARCHAR,
@@ -67,9 +72,9 @@ def init_db():
             """))
 
         # Tabela watch_list
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS watch_list (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_col},
                 tenant_id VARCHAR,
                 face_id VARCHAR,
                 tag VARCHAR,
@@ -78,9 +83,9 @@ def init_db():
         """))
 
         # Tabela heatmap
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS heatmap_points (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id {id_col},
                 tenant_id VARCHAR,
                 tracking_id VARCHAR,
                 x FLOAT,
