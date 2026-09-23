@@ -15,6 +15,7 @@ from camera_store import list_cameras
 from live_preview import load_frame
 from retail_store import get_profile, retail_report, save_profile
 from sqlalchemy import text
+from store_experience import camera_readiness, route_button
 from visitor_dashboard import ZONE, day_bounds
 
 zones_component = components.declare_component(
@@ -29,9 +30,18 @@ def camera_picker(engine, tid, key):
     cameras = {c["camera_id"]: c for c in list_cameras(engine, tid) if c["enabled"]}
     if not cameras:
         st.info(
-            "Cadastre a Intelbras em Configurar Câmeras. Depois conecte o Edge da loja para receber imagem e dados reais."
+            "Adicione sua Intelbras para começar. Depois, conecte o equipamento à rede da loja."
+        )
+        route_button(
+            "Cadastrar minha câmera",
+            "Câmeras",
+            "Cadastro",
+            key=key + "_setup",
+            type="primary",
         )
         return None
+    if st.session_state.get(key) not in cameras:
+        st.session_state.pop(key, None)
     return cameras[
         st.selectbox(
             "Câmera", list(cameras), format_func=lambda c: cameras[c]["name"], key=key
@@ -55,48 +65,38 @@ def private_image(body, alt="Imagem da câmera"):
 def render_cameras(engine, tid):
     if st.session_state.get("tenant_id") != tid:
         return
-    st.title("Câmeras da loja")
-    st.caption("Intelbras conectada pelo Edge. A câmera permanece na rede da loja.")
+    st.title("Câmeras")
+    st.caption("Confira a imagem e a conexão da sua loja.")
     camera = camera_picker(engine, tid, "live_camera")
     if not camera:
         return
     cid = camera["camera_id"]
-    profile = get_profile(engine, tid, cid)
-    with engine.connect() as c:
-        health = (
-            c.execute(
-                text(
-                    "SELECT * FROM retail_edge_health WHERE tenant_id=:t AND camera_id=:c"
-                ),
-                {"t": tid, "c": cid},
-            )
-            .mappings()
-            .first()
-        )
-    if not health or time.time() - health["received_at"] > 30:
-        st.warning(
-            "Edge sem comunicação recente. A imagem e os totais podem estar desatualizados."
-        )
-    elif health["camera_fps"] <= 0:
-        st.error(
-            "Edge conectado, mas a câmera não está entregando quadros. Confira IP, usuário, senha e canal."
-        )
+    ready = camera_readiness(engine, tid, cid)
+    if ready["current"]:
+        st.success("Online · Imagem e contagem conectadas")
     else:
-        st.success("Câmera online")
+        st.warning(ready["status"] + " · " + ready["action"])
+    if ready["last_seen"]:
         st.caption(
-            f"{health['camera_fps']:.1f} quadros/s recebidos · {health['queue_size']} itens na fila do Edge"
+            "Última comunicação: "
+            + datetime.fromtimestamp(ready["last_seen"], ZONE).strftime(
+                "%d/%m às %H:%M:%S"
+            )
         )
-        if health["revision"] != profile["revision"]:
-            st.info("Configuração salva. Aguardando aplicação no Edge.")
+    if ready["image"] and not ready["configured"]:
+        route_button("Marcar os lados da entrada", "Câmeras", "Zonas e gravação", cid)
     frame = load_frame(tid, cid)
     if frame:
         with st.expander("Imagem recente da câmera", expanded=True):
             private_image(frame[0])
     else:
-        st.info(
-            "A prévia aparecerá quando o Edge conectar a câmera. Nenhuma imagem de demonstração é utilizada."
-        )
-    if st.button("Preparar vídeo ao vivo", type="primary"):
+        st.info("A imagem aparecerá quando o equipamento da loja conectar a câmera.")
+    if st.button(
+        "Abrir vídeo ao vivo",
+        type="primary",
+        disabled=not ready["image"],
+        help="A câmera precisa estar enviando imagem para iniciar o vídeo.",
+    ):
         try:
             old = st.session_state.pop("retail_live_job", None)
             if old:
@@ -118,9 +118,9 @@ def render_cameras(engine, tid):
     st.divider()
     from intelbras_kit import build_edge_kit
 
-    st.subheader("Instalação do Edge")
+    st.subheader("Conectar o equipamento da loja")
     st.caption(
-        "Kit para o responsável técnico instalar uma vez no computador da loja. O cliente configura as câmeras e zonas neste painel."
+        "Instalação única pelo responsável técnico. Depois você configura a câmera e acompanha tudo por este painel."
     )
     st.download_button(
         "Baixar kit Intelbras",
@@ -168,14 +168,25 @@ def render_zones(engine, tid):
         [None, *options],
         format_func=lambda z: options[z]["name"] if z else "Criar nova área",
     )
+    roles = {z["role"] for z in settings["zones"]}
+    next_role = (
+        "outside"
+        if "outside" not in roles
+        else "inside"
+        if "inside" not in roles
+        else "area"
+    )
+    next_name = {"outside": "Lado de fora", "inside": "Lado de dentro", "area": ""}[
+        next_role
+    ]
     existing = options.get(
-        selected, {"name": "", "role": "area", "points": [], "alert_after": 0}
+        selected, {"name": next_name, "role": next_role, "points": [], "alert_after": 0}
     )
     name = st.text_input(
         "Nome da área",
         value=existing["name"],
         max_chars=60,
-        key="zone_name_" + str(selected) + cid,
+        key="zone_name_" + str(selected) + cid + next_role,
     )
     role = st.selectbox(
         "Função",
@@ -186,7 +197,7 @@ def render_zones(engine, tid):
             "outside": "Lado externo da entrada",
             "inside": "Lado interno da entrada",
         }[r],
-        key="zone_role_" + str(selected) + cid,
+        key="zone_role_" + str(selected) + cid + next_role,
     )
     alert = int(
         st.number_input(
@@ -202,10 +213,19 @@ def render_zones(engine, tid):
     points = existing["points"]
     if frame:
         editor_key = cid + ":" + str(selected) + ":" + current["revision"]
+        st.info(
+            {
+                "outside": "1. Marque a área do lado de fora da porta. Clique nos cantos e em Usar este desenho.",
+                "inside": "2. Marque o lado de dentro, sem sobrepor a área externa. Clique em Usar este desenho.",
+                "area": "Marque um setor visível, como vitrine, balcão ou exposição de armações.",
+            }[role]
+        )
         result = zones_component(
             editor_key=editor_key,
             image="data:image/jpeg;base64," + base64.b64encode(frame[0]).decode(),
             points=points,
+            zones=[z for z in settings["zones"] if z["zone_id"] != selected],
+            role=role,
             key="zones_" + cid + str(selected),
             default=None,
         )
@@ -248,11 +268,11 @@ def render_zones(engine, tid):
     st.divider()
     with st.form("recording_" + cid):
         recording = st.checkbox(
-            "Gravar vídeo no Edge para consultar o histórico",
+            "Gravar vídeo no equipamento da loja para consultar o histórico",
             value=settings["recording"],
         )
         days = st.number_input(
-            "Manter gravações no Edge por quantos dias?",
+            "Manter gravações por quantos dias?",
             min_value=1,
             max_value=7,
             value=settings["retention_days"],
@@ -267,7 +287,7 @@ def render_zones(engine, tid):
             )
             st.rerun()
     st.caption(
-        "Mudanças são aplicadas pelo Edge e podem interromper brevemente esta câmera. Reduzir a retenção permite que o Frigate remova gravações antigas."
+        "Mudanças são aplicadas pelo equipamento da loja e podem interromper brevemente esta câmera. Reduzir a retenção permite que o Frigate remova gravações antigas."
     )
 
 
@@ -275,12 +295,23 @@ def render_zones(engine, tid):
 def render_behavior(engine, tid):
     if st.session_state.get("tenant_id") != tid:
         return
-    st.title("Comportamento e zonas quentes")
+    st.title("Análise da loja")
     camera = camera_picker(engine, tid, "behavior_camera")
     if not camera:
         return
     day = st.date_input("Data", datetime.now(ZONE).date(), key="behavior_date")
     start, end = day_bounds(day)
+    hours = st.select_slider(
+        "Faixa de horário",
+        options=list(range(25)),
+        value=(0, 24),
+        format_func=lambda hour: f"{hour:02d}:00",
+        key="behavior_hours",
+    )
+    if hours[0] == hours[1]:
+        st.info("Selecione um intervalo de horário para analisar.")
+        return
+    start, end = start + hours[0] * 3600, min(end, start + hours[1] * 3600)
     report = retail_report(engine, tid, camera["camera_id"], start, end)
     st.caption(
         "Permanência e percurso observados na área visível. Não indicam intenção de compra e não identificam a mesma pessoa em visitas diferentes."
@@ -313,17 +344,37 @@ def render_behavior(engine, tid):
             .fillna(0)
         )
         import matplotlib.pyplot as plt
+        from PIL import Image
 
+        frame = load_frame(tid, camera["camera_id"])
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.imshow(
-            heat.to_numpy(),
+        if frame:
+            with Image.open(io.BytesIO(frame[0])) as scene:
+                ax.imshow(scene, extent=(0, 1, 1, 0), aspect="auto")
+        values = heat.to_numpy()
+        import numpy as np
+
+        overlay = np.ma.masked_where(values <= 0, values)
+        plot = ax.imshow(
+            overlay,
             cmap="YlOrRd",
+            alpha=0.65 if frame else 1,
             origin="upper",
             extent=(0, 1, 1, 0),
             aspect="auto",
+            interpolation="nearest",
         )
-        ax.set_xlabel("Largura da imagem")
-        ax.set_ylabel("Altura da imagem")
+        fig.colorbar(plot, ax=ax, label="Segundos observados", fraction=0.035, pad=0.02)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if frame:
+            st.caption(
+                "Mapa do período sobre a imagem mais recente da câmera. A imagem de fundo não é uma gravação desta data."
+            )
+        else:
+            st.caption(
+                "Imagem da câmera indisponível. O mapa conserva as posições relativas dentro do campo de visão."
+            )
         output = io.BytesIO()
         fig.savefig(output, format="jpeg", bbox_inches="tight", dpi=120)
         private_image(output.getvalue(), "Mapa de permanência")
@@ -349,9 +400,10 @@ def render_behavior(engine, tid):
     st.subheader("Alertas de permanência")
     if not report["alerts"]:
         st.info("Nenhum alerta de permanência para este período.")
+    zone_names = {z["zone_id"]: z["name"] for z in report["zones"]}
     for alert in report["alerts"]:
         st.write(
-            f"Área {alert['zone_id']} · {alert['seconds']:.0f} segundos observados · {datetime.fromtimestamp(alert['occurred_at'], ZONE):%H:%M:%S}"
+            f"Área {zone_names.get(alert['zone_id'], 'Área configurada')} · {alert['seconds']:.0f} segundos observados · {datetime.fromtimestamp(alert['occurred_at'], ZONE):%H:%M:%S}"
         )
     st.caption(
         "Alertas são exibidos aqui a partir das observações recebidas. Não enviamos mensagens externas automaticamente."
@@ -377,14 +429,16 @@ def clip_result(engine, tid, jid):
             unsafe_allow_html=True,
         )
         st.caption(
-            "Trecho disponível temporariamente nesta sessão. A gravação original segue a retenção do Edge."
+            "Trecho disponível temporariamente nesta sessão. A gravação original segue o período de retenção configurado."
         )
     elif job["status"] in ("failed", "cancelled", "expired"):
         st.warning(
-            "Trecho indisponível. Confira a conexão do Edge e a retenção da câmera."
+            "Trecho indisponível. Confira a conexão do equipamento e o período de gravação da câmera."
         )
     else:
-        st.info("Solicitação enviada. Aguardando o Edge recuperar a gravação…")
+        st.info(
+            "Solicitação enviada. Aguardando o equipamento da loja recuperar a gravação…"
+        )
 
 
 def render_history(engine, tid):

@@ -298,19 +298,19 @@ class CloudTrafficTests(unittest.TestCase):
             patch.object(db_config, "engine", self.engine),
             patch.object(db_config, "init_db"),
         ):
-            app = AppTest.from_file(
-                str(Path(cloud_api.__file__).with_name("dashboard.py")),
+            app = AppTest.from_string(
+                'from db_config import engine\nfrom traffic_dashboard import render_traffic_counter\nrender_traffic_counter(engine, "one", development=True)',
                 default_timeout=30,
             )
             app.session_state["tenant_id"] = "one"
             app.session_state["tenant_name"] = "Test Store"
             app.run()
             self.assertFalse(app.exception)
-            self.assertEqual(app.title[0].value, "Visão geral")
+            self.assertEqual(app.title[0].value, "Contagens de teste")
             self.assertTrue(
                 any("Webcam de teste" in warning.value for warning in app.warning)
             )
-            self.assertEqual(app.metric[0].value, "0")
+            self.assertEqual(app.metric[0].value, "—")
 
     def test_heartbeat_is_tenant_scoped(self):
         payload = {

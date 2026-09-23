@@ -84,10 +84,10 @@ def _connection_status(engine, tenant_id: str, camera_id: str, kind: str) -> Non
             )
 
 
-def _details(state: dict) -> None:
+def _details(state: dict, allow_webcam=False) -> None:
     draft = state["draft"]
     webcam = state["kind"] == "webcam"
-    st.subheader("2. Dados da " + ("webcam" if webcam else "câmera IP"))
+    st.subheader("Dados da " + ("webcam" if webcam else "câmera IP"))
     if webcam:
         st.info(
             "Use a webcam embutida ou USB de um computador Linux na loja. Esse computador precisa permanecer ligado para contar e transmitir."
@@ -141,43 +141,40 @@ def _details(state: dict) -> None:
                     "Captura em 640 × 480 a 30 fps. Se não abrir, confirme o dispositivo e o formato suportados pela webcam."
                 )
         else:
-            values.update(
-                {
-                    "local_ip": st.text_input(
-                        "IP Local",
-                        value=draft.get("local_ip", ""),
-                        placeholder="192.168.1.100",
-                        key=PREFIX + "ip",
-                    ),
-                    "username": st.text_input(
-                        "Usuário",
-                        value=draft.get("username", "admin"),
-                        max_chars=128,
-                        key=PREFIX + "user",
-                    ),
-                    "password": st.text_input(
-                        "Senha",
-                        value=draft.get("password", ""),
-                        type="password",
-                        max_chars=1024,
-                        help="Ao editar, deixe em branco para manter a senha atual.",
-                        key=PREFIX + "password",
-                    ),
-                    "channel": int(
-                        st.number_input(
-                            "Canal",
-                            min_value=1,
-                            max_value=256,
-                            value=int(draft.get("channel", 1)),
-                            key=PREFIX + "channel",
-                        )
-                    ),
-                    "enabled": st.checkbox(
-                        "Câmera ativa",
-                        value=bool(draft.get("enabled", True)),
-                        key=PREFIX + "enabled",
-                    ),
-                }
+            left, right = st.columns(2)
+            values["local_ip"] = left.text_input(
+                "IP Local",
+                value=draft.get("local_ip", ""),
+                placeholder="192.168.1.100",
+                key=PREFIX + "ip",
+            )
+            values["channel"] = int(
+                right.number_input(
+                    "Canal",
+                    min_value=1,
+                    max_value=256,
+                    value=int(draft.get("channel", 1)),
+                    key=PREFIX + "channel",
+                )
+            )
+            values["username"] = left.text_input(
+                "Usuário",
+                value=draft.get("username", "admin"),
+                max_chars=128,
+                key=PREFIX + "user",
+            )
+            values["password"] = right.text_input(
+                "Senha",
+                value=draft.get("password", ""),
+                type="password",
+                max_chars=1024,
+                help="Ao editar, deixe em branco para manter a senha atual.",
+                key=PREFIX + "password",
+            )
+            values["enabled"] = st.checkbox(
+                "Câmera ativa",
+                value=bool(draft.get("enabled", True)),
+                key=PREFIX + "enabled",
             )
         submitted = st.form_submit_button("Revisar cadastro", type="primary")
     if submitted:
@@ -199,13 +196,17 @@ def _details(state: dict) -> None:
             state["draft"] = values
             state["step"] = 3
             st.rerun()
-    if not state["camera_id"] and st.button("Voltar ao tipo de câmera"):
+    if (
+        allow_webcam
+        and not state["camera_id"]
+        and st.button("Voltar ao tipo de câmera")
+    ):
         _begin(state["tenant_id"])
         st.rerun()
 
 
 def _review(engine, tenant_id: str, state: dict) -> None:
-    st.subheader("3. Revise antes de salvar")
+    st.subheader("Revise antes de salvar")
     draft = state["draft"]
     webcam = state["kind"] == "webcam"
     st.write("Nome:", draft["name"])
@@ -261,7 +262,7 @@ def _review(engine, tenant_id: str, state: dict) -> None:
 
 
 def _finish(engine, tenant_id: str, state: dict, sources: dict) -> None:
-    st.subheader("4. Conectar e testar")
+    st.subheader("Conectar e testar")
     st.success("Cadastro salvo.")
     source = sources.get(state["camera_id"])
     if not source:
@@ -270,7 +271,7 @@ def _finish(engine, tenant_id: str, state: dict, sources: dict) -> None:
     st.write("Câmera:", source["name"])
     if state["kind"] == "webcam":
         st.markdown(
-            "1. Baixe e extraia o pacote **no computador Linux da webcam**, com Docker instalado.\n2. Abra um terminal na pasta extraída e execute o comando abaixo.\n3. Informe a chave da loja fornecida na instalação.\n4. Abra **Entradas e Saídas**, selecione a webcam e atravesse a imagem no sentido configurado."
+            "1. Baixe e extraia o pacote **no computador Linux da webcam**, com Docker instalado.\n2. Abra um terminal na pasta extraída e execute o comando abaixo.\n3. Informe a chave da loja fornecida na instalação.\n4. Abra **Desenvolvimento → Contagens de teste**, selecione a webcam e atravesse a imagem no sentido configurado."
         )
         try:
             kit = build_webcam_kit(source, tenant_id)
@@ -296,26 +297,42 @@ def _finish(engine, tenant_id: str, state: dict, sources: dict) -> None:
         )
     else:
         st.info(
-            "Abra Câmeras da loja para baixar o kit Intelbras e conferir a imagem. Após a instalação técnica do Edge, desenhe as áreas externa e interna em Zonas e gravação. O Edge buscará automaticamente a configuração."
+            "Conecte o equipamento à rede da loja para receber a imagem. Depois, marque os lados de fora e de dentro da entrada. A configuração é enviada automaticamente."
+        )
+        from store_experience import route_button
+
+        route_button(
+            "Conectar e conferir imagem",
+            "Câmeras",
+            "Ao vivo",
+            source["camera_id"],
+            type="primary",
         )
     _connection_status(engine, tenant_id, source["camera_id"], state["kind"])
 
 
-def render_camera_settings(engine, tenant_id: str) -> None:
+def render_camera_settings(engine, tenant_id: str, allow_webcam: bool = False) -> None:
     """Render a four-step enrollment wizard with tenant-isolated draft state."""
     state = st.session_state.get(PREFIX + "state")
     if not state or state["tenant_id"] != tenant_id:
         _begin(tenant_id)
         state = st.session_state[PREFIX + "state"]
-    st.title("Configurar Câmeras")
-    st.caption("Cadastre a câmera Intelbras da loja. As opções de webcam são destinadas a testes.")
+    if not allow_webcam and state["kind"] != "ip":
+        _begin(tenant_id)
+        state = st.session_state[PREFIX + "state"]
+    if not allow_webcam and state["step"] == 1:
+        state["step"] = 2
+    st.title("Cadastro da câmera")
+    st.caption("Intelbras · Informe os dados da câmera instalada na loja.")
     try:
         cameras = [{**row, "kind": "ip"} for row in list_cameras(engine, tenant_id)]
         webcams = [{**row, "kind": "webcam"} for row in list_webcams(engine, tenant_id)]
     except SQLAlchemyError:
         st.error("Não foi possível consultar as câmeras. Tente novamente.")
         return
-    sources = {row["camera_id"]: row for row in cameras + webcams}
+    sources = {
+        row["camera_id"]: row for row in cameras + (webcams if allow_webcam else [])
+    }
     if sources:
         with st.expander("Câmeras cadastradas", expanded=False):
             selected = st.selectbox(
@@ -357,7 +374,14 @@ def render_camera_settings(engine, tenant_id: str) -> None:
 
         close_browser_session(engine)
     step = state["step"]
-    st.progress(step / 4, text=f"Etapa {step} de 4 · Tipo → Dados → Revisão → Conexão")
+    if allow_webcam:
+        st.progress(
+            step / 4, text=f"Etapa {step} de 4 · Tipo → Dados → Revisão → Conexão"
+        )
+    else:
+        st.progress(
+            (step - 1) / 3, text=f"Etapa {step - 1} de 3 · Dados → Revisão → Conexão"
+        )
     if step == 1:
         st.subheader("1. Qual câmera você quer adicionar?")
         kind = st.radio(
@@ -385,7 +409,7 @@ def render_camera_settings(engine, tenant_id: str) -> None:
 
             render_browser_camera(engine, tenant_id)
         else:
-            _details(state)
+            _details(state, allow_webcam=allow_webcam)
     elif step == 3:
         _review(engine, tenant_id, state)
     else:

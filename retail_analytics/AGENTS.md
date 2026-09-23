@@ -99,7 +99,7 @@ camera. Current standalone tests are:
 ```sh
 PYTHONPATH=retail_analytics:frigate/test python -m unittest \
   test_camera_provisioning test_directional_counting test_live_preview \
-  test_camera_wizard test_browser_camera test_visitors test_intelbras -v
+  test_camera_wizard test_browser_camera test_visitors test_intelbras test_store_experience -v
 ```
 
 Use compatible dependencies from the cloud image plus `httpx`, `PyYAML` and
@@ -128,3 +128,11 @@ connector; do not enable the legacy facial-matching analytics daemon.
 `retail_store.py` owns calibrated observations and dwell metrics;
 `camera_media.py` owns short-lived media capabilities. Keep the API single-worker
 until live relay state is distributed. Webcam stays under development tools.
+
+## Customer design
+
+`store_experience.py` derives read-only readiness and onboarding from existing
+telemetry. Keep navigation and camera selection tenant-scoped. Do not report
+unavailable traffic as zero or treat present connectivity as proof of historical
+coverage. Keep test sources out of the default store overview. Preserve explicit
+live-view consent and capability revocation when navigating away from Cameras.

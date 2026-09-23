@@ -216,14 +216,11 @@ class CloudTests(unittest.TestCase):
             app.session_state["tenant_id"] = "one"
             app.session_state["tenant_name"] = "Test Store"
             app.run()
-            app.sidebar.radio[0].set_value("Configurar Câmeras").run()
-            self.assertFalse(app.exception)
-            next(r for r in app.radio if r.label == "Tipo de câmera").set_value(
-                "ip"
+            app.sidebar.radio[0].set_value("Câmeras").run()
+            next(r for r in app.radio if r.label == "Área de câmeras").set_value(
+                "Cadastro"
             ).run()
-            next(
-                button for button in app.button if button.label == "Continuar"
-            ).click().run()
+            self.assertFalse(app.exception)
             fields = {field.label: field for field in app.text_input}
             fields["Nome da câmera"].set_value("Entrada")
             fields["IP Local"].set_value("192.168.1.21")

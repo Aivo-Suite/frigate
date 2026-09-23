@@ -52,7 +52,7 @@ class WizardTests(unittest.TestCase):
 
     def app(self):
         app = AppTest.from_string(
-            'from db_config import engine\nfrom camera_dashboard import render_camera_settings\nimport streamlit as st\nrender_camera_settings(engine, st.session_state["tenant_id"])',
+            'from db_config import engine\nfrom camera_dashboard import render_camera_settings\nimport streamlit as st\nrender_camera_settings(engine, st.session_state["tenant_id"], allow_webcam=True)',
             default_timeout=20,
         )
         app.session_state["tenant_id"] = "one"

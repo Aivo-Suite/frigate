@@ -1,123 +1,180 @@
-"""A compact entrance dashboard for the first optical-store pilot."""
+"""An evidence-based store overview with actionable installation guidance."""
 
 import base64
 import logging
-import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 
 import pandas as pd
 import streamlit as st
 from live_preview import load_frame
-from sqlalchemy.exc import SQLAlchemyError
+from retail_store import retail_report
+from store_experience import (
+    camera_readiness,
+    customer_cameras,
+    render_setup,
+    route_button,
+)
 from traffic_store import daily_report, list_counting_sources
-from visitor_dashboard import day_bounds
+from visitor_dashboard import ZONE, day_bounds
 from visitor_store import list_visitors
 
 logger = logging.getLogger(__name__)
 
 
-@st.fragment(run_every="5s")
-def render_traffic_counter(engine, tenant_id: str) -> None:
-    """Display directional counts without labeling tracking records as visitors."""
+def metric_values(report, visitors, current):
+    """Do not present missing telemetry as a measured zero."""
+    evidence = report["entries"] + report["exits"] + visitors["total"] > 0
+    show = evidence or current
+    return [
+        report["entries"] if show else "—",
+        report["exits"] if show else "—",
+        visitors["total"] if show else "—",
+    ]
+
+
+@st.fragment(run_every="15s")
+def render_traffic_counter(engine, tenant_id: str, development=False) -> None:
     if st.session_state.get("tenant_id") != tenant_id:
         return
-    st.title("Visão geral")
-    st.caption("O movimento da sua loja, acompanhado pelas câmeras conectadas.")
-    timezone_name = "America/Sao_Paulo"
-    timezone = ZoneInfo(timezone_name)
-    selected_date = st.date_input("Dia da contagem", datetime.now(timezone).date())
-    st.caption("Horários de Brasília. Use a câmera correspondente ao teste.")
-    if st.button("Atualizar contagem"):
-        st.rerun()
-    try:
-        cameras = list_counting_sources(engine, tenant_id)
-        names = {
-            camera["camera_id"]: camera["name"]
-            + (" (teste)" if camera["is_test"] else "")
-            for camera in cameras
-        }
-        selected_camera = st.selectbox(
-            "Câmera da entrada",
-            list(names) if names else [""],
-            format_func=lambda cid: names[cid] if cid else "Todas as câmeras",
-        )
-        report = daily_report(
-            engine, tenant_id, selected_date, timezone_name, selected_camera or None
-        )
-    except SQLAlchemyError:
-        logger.error("Directional traffic report failed")
-        st.error("Não foi possível consultar a contagem. Tente novamente.")
-        return
-    start, end = day_bounds(selected_date)
-    try:
-        visitors = list_visitors(
-            engine, tenant_id, start, end, selected_camera or None, limit=1
-        )
-    except SQLAlchemyError:
-        st.error("Não foi possível consultar os visitantes.")
-        return
-    first, second, third, fourth = st.columns(4)
-    first.metric("Entradas registradas", report["entries"])
-    second.metric("Saídas registradas", report["exits"])
-    third.metric("Visitantes registrados", visitors["total"])
-    fourth.metric("Visitantes com foto", visitors["with_photo"])
-    st.caption(
-        "Entradas e saídas são passagens pela linha. Visitantes são rastreamentos registrados, não pessoas únicas; funcionários e acompanhantes também podem aparecer."
+    st.title("Contagens de teste" if development else "Resumo")
+    st.caption("Movimento, visitantes e os próximos passos da sua loja.")
+    cameras = (
+        list_counting_sources(engine, tenant_id)
+        if development
+        else customer_cameras(engine, tenant_id)
     )
-    if (
-        selected_camera
-        and next(
-            camera for camera in cameras if camera["camera_id"] == selected_camera
-        )["is_test"]
-    ):
-        st.warning(
-            "Webcam de teste: contagens de movimentos reais captados pela câmera. Estes testes ainda não representam o fluxo de clientes da loja."
-        )
-    if not cameras and not report["health"]:
-        st.info(
-            "Cadastre a câmera em Configurar Câmeras. Depois, ative o contador no servidor local e calibre os lados externo e interno da porta."
-        )
-    elif not report["health"]:
-        st.warning(
-            "Contador ainda sem comunicação. A ativação depende do servidor local e da calibração da entrada."
-        )
-    else:
-        for health in report["health"]:
-            name = names.get(health["camera_id"], "Câmera removida")
-            fresh = time.time() - health["received_at"] < 120
-            if not fresh:
-                st.warning(
-                    f"{name}: sem comunicação recente com o contador. Os totais podem estar incompletos."
-                )
-            elif not health["mqtt_connected"] or health["frigate_available"] is False:
-                st.warning(
-                    f"{name}: análise interrompida. Confira a câmera e a conexão."
-                )
-            else:
-                st.success(f"{name}: câmera conectada e análise ativa.")
-            seen = datetime.fromtimestamp(health["received_at"], timezone).strftime(
-                "%d/%m %H:%M:%S"
-            )
+    if not cameras:
+        if development:
+            st.info("Nenhuma fonte de teste cadastrada.")
+        else:
+            render_setup()
+            st.subheader("Seu movimento aparecerá aqui")
             st.caption(
-                f"Última comunicação: {seen}. Eventos aguardando envio na última comunicação: {health['pending_events']}."
+                "Após conectar a Intelbras e marcar a entrada, você verá as contagens, os horários de maior movimento e os visitantes registrados."
             )
-    if report["entries"] == 0 and report["exits"] == 0:
-        st.info(
-            "Nenhum cruzamento recebido neste dia. Isso não confirma que a loja ficou sem movimento."
+            for column, label in zip(
+                st.columns(3), ["Entradas", "Saídas", "Visitantes registrados"]
+            ):
+                column.metric(label, "—")
+            st.info(
+                "Sem dados da loja. Nenhuma câmera Intelbras ativa está cadastrada."
+            )
+        return
+    names = {c["camera_id"]: c["name"] for c in cameras}
+    left, right = st.columns([2, 1])
+    cid = left.selectbox(
+        "Câmera",
+        list(names),
+        format_func=names.get,
+        key="summary_camera_dev" if development else "summary_camera",
+    )
+    today = datetime.now(ZONE).date()
+    day = right.date_input(
+        "Período",
+        today,
+        max_value=today,
+        key="summary_date_dev" if development else "summary_date",
+    )
+    camera = next(c for c in cameras if c["camera_id"] == cid)
+    is_test = camera.get("is_test", False)
+    ready = None if is_test else camera_readiness(engine, tenant_id, cid)
+    if is_test:
+        st.warning(
+            "Webcam de teste: estes movimentos não representam o fluxo de clientes da loja."
         )
-    st.subheader("Movimento por hora")
-    hourly = pd.DataFrame(report["hourly"])
-    st.bar_chart(hourly, x="Hora", y=["Entradas", "Saídas"])
-    st.download_button(
-        "Baixar contagem por hora",
-        hourly.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"contagem-{selected_date.isoformat()}.csv",
-        mime="text/csv",
+    elif not ready["validated"]:
+        render_setup(camera, ready)
+    if ready:
+        if ready["current"]:
+            st.success("Online · " + camera["name"] + " · Contagem conectada")
+        else:
+            st.warning(ready["status"] + " · " + ready["action"])
+        if ready["last_seen"]:
+            st.caption(
+                "Última comunicação: "
+                + datetime.fromtimestamp(ready["last_seen"], ZONE).strftime(
+                    "%d/%m às %H:%M:%S"
+                )
+            )
+    report = daily_report(engine, tenant_id, day, camera_id=cid)
+    start, end = day_bounds(day)
+    visitors = list_visitors(engine, tenant_id, start, end, cid, limit=1)
+    current = bool(ready and ready["current"] and day == today)
+    values = metric_values(report, visitors, current)
+    evidence = report["entries"] + report["exits"] + visitors["total"] > 0
+    if not current:
+        st.info(
+            "Registros recebidos · Os totais podem estar incompletos em períodos sem conexão."
+            if evidence
+            else "Sem dados atualizados para este período. Isso não significa que a loja ficou sem movimento."
+        )
+    prior = (
+        daily_report(engine, tenant_id, day - timedelta(days=1), camera_id=cid)
+        if day < today and evidence
+        else None
+    )
+    columns = st.columns(4)
+    for column, label, value, field in zip(
+        columns[:3],
+        ["Entradas", "Saídas", "Visitantes registrados"],
+        values,
+        ["entries", "exits", None],
+    ):
+        delta = None
+        if prior and field and report[field] > 0 and prior[field] > 0:
+            delta = f"{(report[field] / prior[field] - 1) * 100:+.0f}% de registros vs. dia anterior"
+        column.metric(label, value, delta=delta, delta_color="off")
+    peak = max(report["hourly"], key=lambda h: h["Entradas"])
+    columns[3].metric(
+        "Maior movimento de entrada", peak["Hora"] if report["entries"] else "—"
     )
     st.caption(
-        "Dados atrasados são atribuídos ao horário em que a passagem ocorreu. Conectividade do contador não garante que a câmera esteja entregando vídeo; valide a imagem durante a instalação."
+        "Entradas e saídas são passagens observadas. Visitantes são acompanhamentos registrados, não pessoas únicas. Comparações consideram registros recebidos e não comprovam cobertura contínua."
     )
+    st.subheader("Movimento ao longo do dia")
+    if evidence or current:
+        hourly = pd.DataFrame(report["hourly"])
+        st.bar_chart(
+            hourly, x="Hora", y=["Entradas", "Saídas"], color=["#175cd3", "#94a3b8"]
+        )
+        with st.expander("Consultar e exportar números"):
+            st.dataframe(hourly, hide_index=True, width="stretch")
+            st.download_button(
+                "Baixar CSV",
+                hourly.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"contagem-{day.isoformat()}.csv",
+                mime="text/csv",
+            )
+    else:
+        st.caption("O gráfico será preenchido com as passagens recebidas da câmera.")
+    if ready and ready["configured"]:
+        behavior = retail_report(engine, tenant_id, cid, start, end)
+        sectors = [z for z in behavior["zones"] if z["seconds"] > 0]
+        st.subheader("Permanência por área")
+        if sectors:
+            st.dataframe(
+                [
+                    {
+                        "Área": z["name"],
+                        "Minutos observados": round(z["seconds"] / 60, 1),
+                        "Acompanhamentos": z["tracks"],
+                    }
+                    for z in sectors
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+            if behavior["limited"]:
+                st.caption(
+                    "Visualização limitada às primeiras 50 mil observações do período."
+                )
+        else:
+            st.caption(
+                "A permanência aparecerá quando pessoas forem acompanhadas nas áreas marcadas."
+            )
+        route_button("Explorar análise da loja", "Análise da loja", camera_id=cid)
+    if st.button("Atualizar resumo"):
+        st.rerun()
 
 
 @st.fragment(run_every="1s")

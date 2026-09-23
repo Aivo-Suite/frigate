@@ -154,7 +154,7 @@ class VisitorTests(unittest.TestCase):
         save_browser_visitors(self.engine, self.grant, self.tracks, self.frame, 100)
         with patch.object(db_config, "engine", self.engine):
             app = AppTest.from_string(
-                'from db_config import engine\nfrom visitor_dashboard import render_visitors\nrender_visitors(engine, "one")',
+                'from db_config import engine\nfrom visitor_dashboard import render_visitors\nrender_visitors(engine, "one", development=True)',
                 default_timeout=20,
             )
             app.session_state["tenant_id"] = "one"
