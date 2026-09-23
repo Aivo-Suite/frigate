@@ -66,8 +66,13 @@ in `/root/frigate-saas/retail_analytics/`.
   keys. Do not put tokens in URLs or relax Origin checks.
 - Do not weaken webcam permission, preview-only or explicit start/stop behavior.
   Opening a page must never automatically activate a camera or send images.
-- Keep raw images ephemeral and bounded. No audio or recording is enabled in
-  the browser pilot. Do not enable either without a user requirement.
+- Full preview frames stay ephemeral and bounded. The user has authorized saving
+  cropped person thumbnails in tenant-scoped `traffic_visitors` records. Do not
+  add biometric matching or identify returning people from these photos.
+- `visitor_store.py` owns visitor records, separate from login accounts. A visitor
+  ID represents a continuous track, not a verified unique identity. CRM sync is
+  deferred. Never expose photos publicly or include them in Git/test fixtures.
+- No audio or full video recording is enabled in the browser pilot.
 
 ## Local hardware and data
 
@@ -94,7 +99,7 @@ camera. Current standalone tests are:
 ```sh
 PYTHONPATH=retail_analytics:frigate/test python -m unittest \
   test_camera_provisioning test_directional_counting test_live_preview \
-  test_camera_wizard test_browser_camera -v
+  test_camera_wizard test_browser_camera test_visitors -v
 ```
 
 Use compatible dependencies from the cloud image plus `httpx`, `PyYAML` and

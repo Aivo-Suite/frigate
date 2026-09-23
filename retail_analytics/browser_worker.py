@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from live_preview import frame_path, store_frame
 from sqlalchemy.exc import SQLAlchemyError
 from traffic_store import ingest_crossings, record_health
+from visitor_store import save_browser_visitors
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ def persist_frame(grant, tracker, body, now, heartbeat):
     """Run synchronous inference and acknowledge crossings only after their DB commit."""
     boxes = app.state.detector.detect(body)
     events, tracks = tracker.update(boxes, now)
+    known = getattr(tracker, "saved_visitors", set())
+    visible = {t["id"] for t in tracks}
+    if tracks and (heartbeat or events or visible - known):
+        save_browser_visitors(engine, grant, tracks, body, now)
+        tracker.saved_visitors = visible
     if events:
         ingest_crossings(engine, grant["tenant_id"], events)
     if heartbeat:

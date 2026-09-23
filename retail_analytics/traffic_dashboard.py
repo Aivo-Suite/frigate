@@ -11,6 +11,8 @@ import streamlit as st
 from live_preview import load_frame
 from sqlalchemy.exc import SQLAlchemyError
 from traffic_store import daily_report, list_counting_sources
+from visitor_dashboard import day_bounds
+from visitor_store import list_visitors
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +22,12 @@ def render_traffic_counter(engine, tenant_id: str) -> None:
     """Display directional counts without labeling tracking records as visitors."""
     if st.session_state.get("tenant_id") != tenant_id:
         return
-    st.title("Entradas e Saídas")
-    st.caption(
-        "Passagens observadas pela câmera da entrada. Uma mesma pessoa pode entrar ou sair mais de uma vez."
-    )
+    st.title("Visão geral")
+    st.caption("O movimento da sua loja, acompanhado pelas câmeras conectadas.")
     timezone_name = "America/Sao_Paulo"
     timezone = ZoneInfo(timezone_name)
     selected_date = st.date_input("Dia da contagem", datetime.now(timezone).date())
-    st.caption("Horários de Brasília (America/Sao_Paulo).")
+    st.caption("Horários de Brasília. Use a câmera correspondente ao teste.")
     if st.button("Atualizar contagem"):
         st.rerun()
     try:
@@ -49,6 +49,22 @@ def render_traffic_counter(engine, tenant_id: str) -> None:
         logger.error("Directional traffic report failed")
         st.error("Não foi possível consultar a contagem. Tente novamente.")
         return
+    start, end = day_bounds(selected_date)
+    try:
+        visitors = list_visitors(
+            engine, tenant_id, start, end, selected_camera or None, limit=1
+        )
+    except SQLAlchemyError:
+        st.error("Não foi possível consultar os visitantes.")
+        return
+    first, second, third, fourth = st.columns(4)
+    first.metric("Entradas registradas", report["entries"])
+    second.metric("Saídas registradas", report["exits"])
+    third.metric("Visitantes registrados", visitors["total"])
+    fourth.metric("Visitantes com foto", visitors["with_photo"])
+    st.caption(
+        "Entradas e saídas são passagens pela linha. Visitantes são rastreamentos registrados, não pessoas únicas; funcionários e acompanhantes também podem aparecer."
+    )
     if (
         selected_camera
         and next(
@@ -58,17 +74,6 @@ def render_traffic_counter(engine, tenant_id: str) -> None:
         st.warning(
             "Webcam de teste: contagens de movimentos reais captados pela câmera. Estes testes ainda não representam o fluxo de clientes da loja."
         )
-    if (
-        selected_camera
-        and next(
-            camera for camera in cameras if camera["camera_id"] == selected_camera
-        )["is_test"]
-    ):
-        st.subheader("Webcam ao vivo")
-        st.caption(
-            "Prévia sem áudio, com atualização aproximada de uma imagem por segundo. Disponível enquanto o notebook transmite."
-        )
-        render_live_preview(tenant_id, selected_camera)
     if not cameras and not report["health"]:
         st.info(
             "Cadastre a câmera em Configurar Câmeras. Depois, ative o contador no servidor local e calibre os lados externo e interno da porta."
@@ -87,10 +92,10 @@ def render_traffic_counter(engine, tenant_id: str) -> None:
                 )
             elif not health["mqtt_connected"] or health["frigate_available"] is False:
                 st.warning(
-                    f"{name}: contador conectado à nuvem, mas a recepção dos eventos do Frigate está interrompida."
+                    f"{name}: análise interrompida. Confira a câmera e a conexão."
                 )
             else:
-                st.success(f"{name}: contador conectado à nuvem e ao MQTT.")
+                st.success(f"{name}: câmera conectada e análise ativa.")
             seen = datetime.fromtimestamp(health["received_at"], timezone).strftime(
                 "%d/%m %H:%M:%S"
             )
@@ -101,13 +106,6 @@ def render_traffic_counter(engine, tenant_id: str) -> None:
         st.info(
             "Nenhum cruzamento recebido neste dia. Isso não confirma que a loja ficou sem movimento."
         )
-    first, second, third = st.columns(3)
-    first.metric("Entradas registradas", report["entries"])
-    second.metric("Saídas registradas", report["exits"])
-    third.metric("Saldo de passagens", report["net_flow"])
-    st.caption(
-        "O saldo é entradas menos saídas no período; não representa a quantidade de pessoas atualmente na loja. A contagem inclui funcionários e acompanhantes."
-    )
     st.subheader("Movimento por hora")
     hourly = pd.DataFrame(report["hourly"])
     st.bar_chart(hourly, x="Hora", y=["Entradas", "Saídas"])

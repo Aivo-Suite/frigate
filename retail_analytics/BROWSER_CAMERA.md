@@ -25,3 +25,9 @@ The additive browser_camera_sources table stores line calibration. browser_camer
 ## Verification
 
 70 isolated unit/integration regressions pass, covering grants, tenant boundaries, expiration, revocation, crossing direction, jitter, disappearance and cleanup on disconnect. A public OpenCV reference image produced two person detections at a median of 29.7 ms per frame across 20 inferences with the worker resource limits. Production WSS upgrade and rejection of an invalid capability were checked without transmitting images. No physical notebook webcam was activated during deployment.
+
+## Visitor photos
+
+Starting browser monitoring now saves a cropped person photo and an anonymous
+visitor record after a track is confirmed. Review them in Visitantes after
+stopping capture. See VISITORS.md for storage and identity limitations.

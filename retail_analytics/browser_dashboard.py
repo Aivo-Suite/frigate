@@ -30,7 +30,7 @@ def render_browser_camera(engine, tenant_id):
         return
     st.subheader("Webcam pelo navegador")
     st.caption(
-        "Sem instalação. A prévia fica no seu computador; o envio à nuvem começa apenas ao iniciar o monitoramento. Sem áudio."
+        "Sem instalação. A prévia fica no seu computador; o envio à nuvem começa apenas ao iniciar o monitoramento. Sem áudio. Durante o monitoramento, uma foto recortada de cada visitante é salva no cadastro da loja."
     )
     try:
         sources = list_browser_sources(engine, tenant_id)
@@ -81,7 +81,7 @@ def render_browser_camera(engine, tenant_id):
             close_browser_session(engine)
             st.rerun()
         st.caption(
-            "Piloto: uma webcam em análise por vez, até 5 imagens por segundo. Após parar ou perder a conexão, prepare uma nova sessão. As contagens salvas permanecem em Entradas e Saídas."
+            "Piloto: uma webcam em análise por vez, até 5 imagens por segundo. Após parar ou perder a conexão, prepare uma nova sessão. As contagens ficam em Visão geral e as fotos em Visitantes."
         )
         st.info(
             "Conte movimentos com o corpo visível. Ajuste a linha à passagem real; perdas de detecção e cruzamentos simultâneos podem reduzir a precisão. Fechar esta página ou suspender o computador interrompe a análise."

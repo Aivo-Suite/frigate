@@ -306,7 +306,7 @@ class CloudTrafficTests(unittest.TestCase):
             app.session_state["tenant_name"] = "Test Store"
             app.run()
             self.assertFalse(app.exception)
-            self.assertEqual(app.title[0].value, "Entradas e Saídas")
+            self.assertEqual(app.title[0].value, "Visão geral")
             self.assertTrue(
                 any("Webcam de teste" in warning.value for warning in app.warning)
             )

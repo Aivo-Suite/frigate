@@ -2,7 +2,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.browser.txt ./
 RUN pip install --no-cache-dir -r requirements.browser.txt
-COPY browser_store.py browser_vision.py browser_worker.py db_config.py live_preview.py traffic_store.py webcam_setup.py ./
+COPY browser_store.py browser_vision.py browser_worker.py db_config.py live_preview.py traffic_store.py visitor_store.py webcam_setup.py ./
 COPY browser_models/yolox_nano.onnx browser_models/YOLOX-LICENSE /models/
 ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTHONUNBUFFERED=1
 CMD ["uvicorn", "browser_worker:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--ws-max-size", "160000", "--ws-max-queue", "1", "--no-access-log"]

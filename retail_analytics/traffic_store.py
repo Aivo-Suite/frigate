@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from browser_store import init_browser_db
 from sqlalchemy import text
+from visitor_store import init_visitor_db, observe_visitor
 from webcam_setup import init_webcam_settings
 
 
@@ -61,6 +62,7 @@ def init_traffic_db(engine) -> None:
 
     init_webcam_settings(engine)
     init_browser_db(engine)
+    init_visitor_db(engine)
 
 
 def ingest_crossings(engine, tenant_id: str, events: list[dict]) -> list[str]:
@@ -104,6 +106,13 @@ def ingest_crossings(engine, tenant_id: str, events: list[dict]) -> list[str]:
                 ON CONFLICT (tenant_id, event_id) DO NOTHING
             """),
                 {**event, "tid": tenant_id, "received_at": time.time()},
+            )
+            observe_visitor(
+                conn,
+                tenant_id,
+                event["camera_id"],
+                event["tracking_id"],
+                event["occurred_at"],
             )
             # Check again after ON CONFLICT, including concurrent duplicate requests.
             stored = (
