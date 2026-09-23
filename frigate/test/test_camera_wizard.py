@@ -58,6 +58,7 @@ class WizardTests(unittest.TestCase):
         app.session_state["tenant_id"] = "one"
         app.run()
         self.assertFalse(app.exception)
+        self.assertEqual(app.radio[0].value, "ip")
         return app
 
     def click(self, app, label):

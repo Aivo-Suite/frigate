@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 from cryptography.fernet import Fernet
+from retail_store import get_profile, init_retail_db
 from sqlalchemy import text
 
 
@@ -47,6 +48,11 @@ def init_camera_db(engine) -> None:
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS ix_cameras_tenant ON cameras (tenant_id)")
         )
+
+    init_retail_db(engine)
+    from camera_media import init_media_db
+
+    init_media_db(engine)
 
 
 def build_rtsp_url(local_ip: str, username: str, password: str, channel: int) -> str:
@@ -172,6 +178,7 @@ def camera_snapshot(engine, tenant_id: str) -> dict:
             "name": row["name"],
             "frigate_name": "aivo_" + row["camera_id"],
             "rtsp_url": cipher.decrypt(row["rtsp_url_encrypted"].encode()).decode(),
+            "analytics": get_profile(engine, tenant_id, row["camera_id"]),
         }
         for row in rows
     ]

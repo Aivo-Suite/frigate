@@ -99,7 +99,7 @@ camera. Current standalone tests are:
 ```sh
 PYTHONPATH=retail_analytics:frigate/test python -m unittest \
   test_camera_provisioning test_directional_counting test_live_preview \
-  test_camera_wizard test_browser_camera test_visitors -v
+  test_camera_wizard test_browser_camera test_visitors test_intelbras -v
 ```
 
 Use compatible dependencies from the cloud image plus `httpx`, `PyYAML` and
@@ -120,3 +120,11 @@ Frigate's generated API schema is unrelated unless its own API changes.
 Before a requested commit/push, inspect the staged diff for secrets and generated
 files, check the remote branch, and push without force. Report what was tested,
 what was deployed, and whether physical camera validation remains pending.
+
+## Intelbras customer path
+
+See `INTELBRAS.md` and `edge_kit/README.md`. `intelbras_edge.py` is the production
+connector; do not enable the legacy facial-matching analytics daemon.
+`retail_store.py` owns calibrated observations and dwell metrics;
+`camera_media.py` owns short-lived media capabilities. Keep the API single-worker
+until live relay state is distributed. Webcam stays under development tools.

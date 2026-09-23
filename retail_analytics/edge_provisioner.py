@@ -96,6 +96,63 @@ def merge_config(original: dict, snapshot: dict, state: dict) -> tuple[dict, dic
                 raise ValueError("Managed detection input is ambiguous")
             detection[0]["path"] = camera["rtsp_url"]
             cameras[name]["enabled"] = True
+    # Production profiles are authored in the SaaS and validated before deployment.
+    streams = config.get("go2rtc", {}).get("streams", {})
+    for name in previous - desired.keys():
+        streams.pop(name, None)
+    for name, camera in desired.items():
+        if "analytics" not in camera:
+            continue
+        from retail_store import CameraProfile, profile_revision
+
+        analytics = camera["analytics"]
+        profile = CameraProfile.model_validate(analytics["settings"]).model_dump(
+            mode="json"
+        )
+        if analytics["revision"] != profile_revision(profile):
+            raise ValueError("Invalid analytics revision")
+        streams = config.setdefault("go2rtc", {}).setdefault("streams", {})
+        if name in streams and name not in previous:
+            raise ValueError("Managed stream conflicts with local configuration")
+        sub = camera["rtsp_url"].replace("subtype=0", "subtype=1")
+        streams[name] = [sub]
+        managed = cameras[name]
+        inputs = [
+            {"path": sub, "input_args": "preset-rtsp-generic", "roles": ["detect"]}
+        ]
+        if profile["recording"]:
+            inputs.append(
+                {
+                    "path": camera["rtsp_url"],
+                    "input_args": "preset-rtsp-generic",
+                    "roles": ["record"],
+                }
+            )
+        managed["ffmpeg"]["inputs"] = inputs
+        managed["snapshots"] = {
+            "enabled": True,
+            "retain": {"default": profile["retention_days"]},
+        }
+        managed["record"] = {
+            "enabled": profile["recording"],
+            "continuous": {"days": profile["retention_days"]},
+            "alerts": {"retain": {"days": profile["retention_days"]}},
+            "detections": {"retain": {"days": profile["retention_days"]}},
+        }
+        local_zones = {
+            k: v
+            for k, v in managed.get("zones", {}).items()
+            if not k.startswith("aivo_")
+        }
+        for zone in profile["zones"]:
+            local_zones[zone["zone_id"]] = {
+                "coordinates": ",".join(
+                    str(v) for point in zone["points"] for v in point
+                ),
+                "objects": ["person"],
+                "inertia": 3,
+            }
+        managed["zones"] = local_zones
     if "cameras" not in original and not cameras:
         config.pop("cameras")
     return config, {
@@ -140,7 +197,7 @@ async def command(*args: str, data: bytes | None = None, timeout: int = 60) -> b
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(data), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         process.kill()
         await process.communicate()
         raise RuntimeError("Local command timed out") from None

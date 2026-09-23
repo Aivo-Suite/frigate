@@ -1,0 +1,42 @@
+name: aivo-intelbras-edge
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:0.18.0
+    container_name: aivo-intelbras-frigate
+    restart: unless-stopped
+    shm_size: 512mb
+    volumes:
+      - ./config:/config
+      - ./media:/media/frigate
+      - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+      - /tmp/cache:size=268435456
+    ports:
+      - 127.0.0.1:5000:5000
+    depends_on:
+      - mqtt
+  connector:
+    build:
+      context: .
+      dockerfile: Dockerfile.edge
+    restart: unless-stopped
+    environment:
+      CLOUD_API_URL: https://frigate.agenticx.ia.br
+      TENANT_API_KEY_FILE: /run/secrets/tenant_api_key
+    secrets:
+      - tenant_api_key
+    volumes:
+      - ./config:/frigate-config:ro
+      - ./state:/data
+    depends_on:
+      - frigate
+      - mqtt
+secrets:
+  tenant_api_key:
+    file: ./.secrets/tenant-api-key

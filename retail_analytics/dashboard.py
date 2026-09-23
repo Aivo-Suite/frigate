@@ -73,6 +73,9 @@ def logout():
     from browser_dashboard import close_browser_session
 
     close_browser_session(engine)
+    from camera_media import close_dashboard_media
+
+    close_dashboard_media(engine, st.session_state)
     st.session_state.clear()
     st.rerun()
 
@@ -87,12 +90,29 @@ st.sidebar.text(st.session_state["tenant_name"])
 st.sidebar.caption("INTELIGÊNCIA PARA SUA LOJA")
 page = st.sidebar.radio(
     "Navegação",
-    ["Visão geral", "Visitantes", "Webcam no navegador", "Configurar Câmeras"],
+    [
+        "Visão geral",
+        "Visitantes",
+        "Câmeras da loja",
+        "Zonas e gravação",
+        "Comportamento",
+        "Histórico",
+        "Configurar Câmeras",
+    ]
+    + (
+        ["Webcam no navegador"]
+        if st.sidebar.checkbox("Ferramentas de desenvolvimento", value=False)
+        else []
+    ),
 )
 st.sidebar.divider()
 st.sidebar.caption("Dados reais das câmeras conectadas")
 if st.sidebar.button("Sair", use_container_width=True):
     logout()
+if page != "Câmeras da loja":
+    from camera_media import close_dashboard_media
+
+    close_dashboard_media(engine, st.session_state)
 if page not in ("Webcam no navegador", "Configurar Câmeras"):
     from browser_dashboard import close_browser_session
 
@@ -109,6 +129,25 @@ elif page == "Visitantes":
     from visitor_dashboard import render_visitors
 
     render_visitors(engine, tid)
+elif page in ("Câmeras da loja", "Zonas e gravação", "Comportamento", "Histórico"):
+    from retail_dashboard import (
+        render_behavior,
+        render_cameras,
+        render_history,
+        render_zones,
+    )
+
+    try:
+        {
+            "Câmeras da loja": render_cameras,
+            "Zonas e gravação": render_zones,
+            "Comportamento": render_behavior,
+            "Histórico": render_history,
+        }[page](engine, tid)
+    except (SQLAlchemyError, ValueError, OSError, PermissionError):
+        st.error(
+            "Não foi possível carregar esta operação. Confira a conexão e tente novamente."
+        )
 elif page == "Webcam no navegador":
     from browser_dashboard import render_browser_camera
 

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 # Instalar apenas os pacotes necessários para a nuvem
 RUN pip install --no-cache-dir \
     fastapi \
-    uvicorn \
+    "uvicorn[standard]" \
     streamlit \
     pandas \
     sqlalchemy \

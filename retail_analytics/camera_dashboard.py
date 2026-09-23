@@ -31,7 +31,7 @@ def _begin(tenant_id: str, current: dict | None = None) -> None:
     st.session_state[PREFIX + "state"] = {
         "tenant_id": tenant_id,
         "step": 2 if current else 1,
-        "kind": current.get("kind", "browser") if current else "browser",
+        "kind": current.get("kind", "ip") if current else "ip",
         "camera_id": current.get("camera_id") if current else None,
         "draft": dict(current or {}),
     }
@@ -296,7 +296,7 @@ def _finish(engine, tenant_id: str, state: dict, sources: dict) -> None:
         )
     else:
         st.info(
-            "Mantenha o servidor local ligado e conectado à internet. Ele buscará automaticamente a configuração. Depois, confira a imagem no Frigate local e calibre as zonas da entrada."
+            "Abra Câmeras da loja para baixar o kit Intelbras e conferir a imagem. Após a instalação técnica do Edge, desenhe as áreas externa e interna em Zonas e gravação. O Edge buscará automaticamente a configuração."
         )
     _connection_status(engine, tenant_id, source["camera_id"], state["kind"])
 
@@ -308,7 +308,7 @@ def render_camera_settings(engine, tenant_id: str) -> None:
         _begin(tenant_id)
         state = st.session_state[PREFIX + "state"]
     st.title("Configurar Câmeras")
-    st.caption("Adicione uma câmera IP ou use a webcam do computador da loja.")
+    st.caption("Cadastre a câmera Intelbras da loja. As opções de webcam são destinadas a testes.")
     try:
         cameras = [{**row, "kind": "ip"} for row in list_cameras(engine, tenant_id)]
         webcams = [{**row, "kind": "webcam"} for row in list_webcams(engine, tenant_id)]
@@ -362,7 +362,7 @@ def render_camera_settings(engine, tenant_id: str) -> None:
         st.subheader("1. Qual câmera você quer adicionar?")
         kind = st.radio(
             "Tipo de câmera",
-            ["browser", "ip", "webcam"],
+            ["ip", "browser", "webcam"],
             format_func=lambda value: (
                 "Webcam pelo navegador (sem instalação)"
                 if value == "browser"
@@ -373,7 +373,7 @@ def render_camera_settings(engine, tenant_id: str) -> None:
             key=PREFIX + "kind",
         )
         st.caption(
-            "IP: câmera da rede da loja. Webcam: conectada ao computador Linux que fará a análise."
+            "Intelbras: câmera na rede da loja, conectada pelo Edge. Webcam: opção para testes de desenvolvimento."
         )
         if st.button("Continuar", type="primary"):
             state["kind"] = kind

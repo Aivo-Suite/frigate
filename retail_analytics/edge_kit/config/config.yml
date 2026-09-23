@@ -1,0 +1,9 @@
+mqtt:
+  enabled: true
+  host: mqtt
+  topic_prefix: aivo_store
+detectors:
+  cpu:
+    type: cpu
+    num_threads: 2
+cameras: {}

@@ -15,8 +15,8 @@ and exits. CRM synchronization and a public visitor API are not enabled yet.
 A visitor ID is not a verified person identity. Tracking loss, reconnection or
 a later visit can create a new record. Do not label counts as unique customers.
 Existing historical crossings are preserved and are not assigned invented photos.
-New Edge crossing uploads also create visitor metadata, but Edge photo upload is
-not yet implemented; photo capture in this release is from browser webcams.
+Edge crossing and observation uploads create visitor metadata. The Intelbras
+connector also uploads cropped Frigate snapshots when available.
 
 The Visitantes screen scopes reads and inline photos to the authenticated tenant,
 with local-date and camera filters and twelve records per page. Images are not
@@ -27,3 +27,9 @@ Database backups therefore contain visitor photos and must remain private.
 Schema creation is additive and idempotent via init_traffic_db. No production
 fixtures or historical data deletion are part of this migration. Test using
 test_visitors with temporary databases and generated pixels, never store cameras.
+
+## Intelbras Edge snapshots
+
+The production connector now saves cropped Frigate snapshots through authenticated
+`/api/edge/photos/{camera_id}/{tracking_id}` after its observation upload. See
+`INTELBRAS.md` for installation and acceptance testing.

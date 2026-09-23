@@ -187,3 +187,10 @@ async def upload_webcam_preview(camera_id: str, request: Request, tenant_id: str
     except (OSError, RuntimeError):
         raise HTTPException(status_code=503, detail="Preview temporarily unavailable") from None
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+from retail_api import register_retail_api
+register_retail_api(app, get_tenant_from_api_key)
+
+from camera_media import register_media_api
+register_media_api(app, get_tenant_from_api_key)
